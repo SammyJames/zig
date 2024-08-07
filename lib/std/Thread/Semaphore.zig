@@ -71,6 +71,14 @@ pub fn post(sem: *Semaphore) void {
     sem.cond.signal();
 }
 
+pub fn postMany(sem: *Semaphore, num: usize) void {
+    sem.mutex.lock();
+    defer sem.mutex.unlock();
+
+    sem.permits += num;
+    sem.cond.broadcast();
+}
+
 test Semaphore {
     if (builtin.single_threaded) {
         return error.SkipZigTest;
