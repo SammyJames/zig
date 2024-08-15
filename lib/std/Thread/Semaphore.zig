@@ -71,6 +71,14 @@ pub fn post(sem: *Semaphore) void {
     sem.cond.signal();
 }
 
+pub fn postMany(sem: *Semaphore, num: usize) void {
+    sem.mutex.lock();
+    defer sem.mutex.unlock();
+
+    sem.permits += num;
+    sem.cond.broadcast();
+}
+
 test Semaphore {
     if (builtin.single_threaded) {
         return error.SkipZigTest;
@@ -108,4 +116,41 @@ test timedWait {
 
     try sem.timedWait(1);
     try testing.expectEqual(0, sem.permits);
+}
+
+test "Semaphore postMany" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
+    const TestContext = struct {
+        sem: *Semaphore,
+        waiters: *std.atomic.Value(u32),
+
+        fn worker(ctx: *@This()) void {
+            _ = ctx.waiters.fetchAdd(1, .release);
+            defer _ = ctx.waiters.fetchSub(1, .release);
+            ctx.sem.wait();
+        }
+    };
+
+    const num_threads = 3;
+    var sem = Semaphore{ .permits = 0 };
+
+    var waiters = std.atomic.Value(u32).init(0);
+    var threads: [num_threads]std.Thread = undefined;
+    var ctx = TestContext{ .sem = &sem, .waiters = &waiters };
+
+    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, TestContext.worker, .{&ctx});
+
+    while (true) {
+        const n_waiting = waiters.load(.acquire);
+        if (n_waiting == num_threads) {
+            sem.postMany(n_waiting);
+            break;
+        }
+    }
+
+    for (&threads) |*t| t.join();
+    try testing.expectEqual(waiters.load(.acquire), 0);
 }
